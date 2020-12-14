@@ -2,8 +2,9 @@ import logging
 import requests
 from bs4 import BeautifulSoup
 from aiogram import Bot, Dispatcher, executor, types
-from aiogram.utils.markdown import bold
-from aiogram.types import ParseMode
+from aiogram.utils.emoji import emojize
+from aiogram.utils.markdown import italic, text, code, bold
+from aiogram.types import ParseMode, InputMediaPhoto
 
 from api_token import token
 
@@ -42,7 +43,7 @@ def parse(article):
     print(product_title)
 
     product_price = soup.find("span", class_='price').text
-    product_price = bold(f"Закуп: {product_price}р")
+    product_price = f"Закуп: {product_price}р."
     # print(product_price)
 
     answer = f"{product_title}\n\n{product_price}"
@@ -50,7 +51,7 @@ def parse(article):
     imgs = soup.find_all("a", class_='fancybox-thumb')
     product_imgs = []
 
-    for img in imgs[:2]:
+    for img in imgs[:3]:
         product_imgs.append(img.get('href'))
 
     print(product_imgs)
@@ -76,13 +77,23 @@ async def echo(message: types.Message):
             print(type(article))
             answer, imgs = parse(article)
 
-            await message.answer(str(answer), parse_mode=ParseMode.MARKDOWN)
+            media = []
 
-            for img in imgs:
-                await bot.send_photo(message.chat.id,
-                                     types.InputFile.from_url(img))
+            media.append(
+                InputMediaPhoto(types.InputFile.from_url(imgs[0]), answer))
+
+            for img in imgs[1:]:
+                media.append(InputMediaPhoto(img))
+
+            await bot.send_media_group(message.from_user.id,
+                                       media,
+                                       reply_to_message_id=message.message_id,
+                                       )
     else:
-        await message.answer('Нет, Валера, не так...')
+        message_text = text(
+            emojize('Я не знаю, что с этим делать :astonished:'),
+            italic('\nЯ просто напомню,'), 'что есть', '/help')
+        await message.reply(message_text, parse_mode=ParseMode.MARKDOWN)
 
 
 if __name__ == '__main__':
