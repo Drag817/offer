@@ -3,8 +3,10 @@ import logging
 from aiogram import Bot, Dispatcher, executor, types
 from aiogram.utils.emoji import emojize
 from aiogram.types.message import ContentType
-from aiogram.utils.markdown import italic, text
+from aiogram.utils.markdown import italic, text, bold
 from aiogram.types import InputMediaPhoto, ChatActions
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.contrib.middlewares.logging import LoggingMiddleware
 
 
 from config import TOKEN
@@ -15,7 +17,9 @@ import keyboards as kb
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=TOKEN, parse_mode=types.ParseMode.MARKDOWN)
-dp = Dispatcher(bot)
+
+dp = Dispatcher(bot, storage=MemoryStorage())
+dp.middleware.setup(LoggingMiddleware())
 
 
 @dp.message_handler(commands=['start'])
@@ -40,19 +44,19 @@ async def process_start_command(message: types.Message):
                         reply_markup=kb.greet_kb1)
 
 
-@dp.message_handler(commands=["geophone"])
-async def geophone(message):
-    # Эти параметры для клавиатуры необязательны, просто для удобства
-    keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
-    button_phone = types.KeyboardButton(text="Отправить номер телефона",
-                                        request_contact=True)
-    button_geo = types.KeyboardButton(text="Отправить местоположение",
-                                      request_location=True)
-    keyboard.add(button_phone, button_geo)
-    await bot.send_message(message.chat.id,
-                           "Отправь мне свой номер телефона или поделись "
-                           "местоположением, жалкий человечишка!",
-                           reply_markup=keyboard)
+# @dp.message_handler(commands=["geophone"])
+# async def geophone(message):
+#     # Эти параметры для клавиатуры необязательны, просто для удобства
+#     keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
+#     button_phone = types.KeyboardButton(text="Отправить номер телефона",
+#                                         request_contact=True)
+#     button_geo = types.KeyboardButton(text="Отправить местоположение",
+#                                       request_location=True)
+#     keyboard.add(button_phone, button_geo)
+#     await bot.send_message(message.chat.id,
+#                            "Отправь мне свой номер телефона или поделись "
+#                            "местоположением, жалкий человечишка!",
+#                            reply_markup=keyboard)
 
 
 @dp.message_handler(commands=['1'])
@@ -95,16 +99,19 @@ async def process_callback_button1(callback_query: types.CallbackQuery):
 
 @dp.message_handler(content_types=ContentType.ANY)
 async def echo(message: types.Message):
+    # TODO: move this if to another handler
     if message.text == 'Новый заказ':
         await message.reply('Введи артикул товара (через пробел)')
     elif message.text.isdigit():
         if len(message.text) % 6 == 0:
             answer, images = parse(message.text)
 
-            media = [InputMediaPhoto(images[0],
-                                     answer)]
+            count = 1
+            answer += bold(f'\nКоличество: {count}')
 
-            for img in images[1:]:
+            media = []
+
+            for img in images:
                 media.append(InputMediaPhoto(img))
 
             await bot.send_chat_action(message.from_user.id,
@@ -115,9 +122,11 @@ async def echo(message: types.Message):
                                        reply_to_message_id=message.message_id,
                                        )
 
-            await message.reply('Цена, кол-во?',
-                                reply_markup=kb.inline_kb1,
-                                )
+            await bot.send_message(message.from_user.id,
+                                   text=emojize(answer),
+                                   reply_to_message_id=-1,
+                                   reply_markup=kb.inline_kb1,
+                                   )
     else:
         message_text = text(
             emojize('Я не знаю, что с этим делать :astonished:'),

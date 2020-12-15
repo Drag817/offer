@@ -1,5 +1,6 @@
 import requests
 from bs4 import BeautifulSoup
+from aiogram.utils.markdown import bold
 
 
 def parse(article):
@@ -26,23 +27,23 @@ def parse(article):
 
     product_title = (soup.find("div", class_='itemBlock').
                      find("h1").text.split('\n'))[0]
-    product_title = f"{product_title} [ссылка]({url})"
+    product_title = f"{product_title} [↗]({url})"
     # print(product_title)
 
     try:
-        product_price = soup.find("span", class_='price').text
-        product_price = f"Закуп: {product_price}р"
+        price = soup.find("span", class_='price').text
+        product_price = f"Закуп: {price}р"
     except AttributeError:
         product_price = "Нет в продаже"
     # print(product_price)
 
-    answer = f"{product_title}\n\n{product_price}"
+    answer = f"{product_title}\n\n{bold(product_price)}"
 
-    imgs = soup.find_all("a", class_='fancybox-thumb')
-    product_imgs = []
+    images = soup.find_all("a", class_='fancybox-thumb')
+    product_images = []
 
-    for img in imgs[:3]:
-        product_imgs.append(img.get('href'))
+    for img in images[:3]:
+        product_images.append(img.get('href'))
 
-    # print(product_imgs)
-    return answer, product_imgs
+    # print(product_images)
+    return answer, product_images
