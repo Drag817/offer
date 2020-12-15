@@ -1,17 +1,26 @@
 import logging
 
 from aiogram import Bot, Dispatcher, executor, types
+from aiogram.dispatcher import FSMContext
+from aiogram.dispatcher.filters import Command
 from aiogram.utils.emoji import emojize
 from aiogram.types.message import ContentType
 from aiogram.utils.markdown import italic, text, bold
-from aiogram.types import InputMediaPhoto, ChatActions
+from aiogram.types import InputMediaPhoto, ChatActions, CallbackQuery
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
-
+from aiogram.dispatcher.filters.state import StatesGroup, State
 
 from config import TOKEN
 from functions import parse
 import keyboards as kb
+
+
+class Stage(StatesGroup):
+
+    Q1 = State()
+    Q2 = State()
+    Q3 = State()
 
 
 logging.basicConfig(level=logging.INFO)
@@ -59,16 +68,16 @@ async def process_start_command(message: types.Message):
 #                            reply_markup=keyboard)
 
 
-@dp.message_handler(commands=['1'])
-async def process_command_1(message: types.Message):
-    await message.reply("Первая инлайн кнопка", reply_markup=kb.inline_kb1)
+# @dp.message_handler(commands=['1'])
+# async def process_command_1(message: types.Message):
+#     await message.reply("Первая инлайн кнопка", reply_markup=kb.inline_kb1)
 
 
-@dp.callback_query_handler(lambda c: c.data == 'count')
-async def process_callback_button1(callback_query: types.CallbackQuery):
-    await bot.answer_callback_query(callback_query.id)
-    await bot.send_message(callback_query.from_user.id,
-                           'Нажата первая кнопка!')
+# @dp.callback_query_handler(lambda c: c.data == 'count')
+# async def process_callback_button1(callback_query: types.CallbackQuery):
+#     await bot.answer_callback_query(callback_query.id)
+#     await bot.send_message(callback_query.from_user.id,
+#                            'Нажата первая кнопка!')
 
 
 # @dp.callback_query_handler(lambda c: c.data and c.data.startswith('btn'))
@@ -97,41 +106,214 @@ async def process_callback_button1(callback_query: types.CallbackQuery):
 #                         reply_markup=kb.inline_kb_full)
 
 
-@dp.message_handler(content_types=ContentType.ANY)
+@dp.message_handler(Command('new_order'))
 async def echo(message: types.Message):
-    # TODO: move this if to another handler
-    if message.text == 'Новый заказ':
-        await message.reply('Введи артикул товара (через пробел)')
-    elif message.text.isdigit():
-        if len(message.text) % 6 == 0:
-            answer, images = parse(message.text)
+    await message.answer('Введите артикулы товаров через пробел')
 
-            count = 1
-            answer += bold(f'\nКоличество: {count}')
+    await Stage.Q1.set()
 
-            media = []
 
-            for img in images:
-                media.append(InputMediaPhoto(img))
+@dp.message_handler(state=Stage.Q1)
+async def process(message: types.Message, state: FSMContext):
+    art_list = message.text.split()
+    for art in art_list:
+        print(art)
+        if art.isdigit() and len(art) % 6 == 0:
+            continue
+        else:
+            await state.finish()
+            return await message.answer('Неверно введены артикулы!')
 
-            await bot.send_chat_action(message.from_user.id,
-                                       ChatActions.TYPING)
+    async with state.proxy() as data:
+        data['art_list'] = art_list
+        data['current_art'] = art_list[0]
+        data['message'] = message
+        current_art = art_list[0]
 
-            await bot.send_media_group(message.from_user.id,
-                                       media,
-                                       reply_to_message_id=message.message_id,
-                                       )
+        # async with state.proxy() as data:
+        #     art_list = data['art_list']
 
-            await bot.send_message(message.from_user.id,
-                                   text=emojize(answer),
-                                   reply_to_message_id=-1,
-                                   reply_markup=kb.inline_kb1,
-                                   )
-    else:
-        message_text = text(
-            emojize('Я не знаю, что с этим делать :astonished:'),
-            italic('\nЯ просто напомню,'), 'что есть', '/help')
-        await message.reply(message_text)
+    answer, images = parse(current_art)
+
+    async with state.proxy() as data:
+        data[f'article:{current_art}'] = current_art
+        data[f'images:{current_art}'] = images
+        data[f'count:{current_art}'] = 1
+        data[f'price:{current_art}'] = 0
+
+    count = 1
+    price = 0
+    answer += bold(f'\nКоличество: {count}\nЦена продажи: {price}р')
+
+    async with state.proxy() as data:
+        data[f'title:{current_art}'] = answer
+
+    media = []
+
+    for img in images:
+        media.append(InputMediaPhoto(img))
+
+    await bot.send_chat_action(message.from_user.id,
+                               ChatActions.TYPING)
+
+    await bot.send_media_group(message.from_user.id,
+                               media,
+                               reply_to_message_id=message.message_id,
+                               )
+
+    await bot.send_message(message.from_user.id,
+                           text=emojize(answer),
+                           reply_markup=kb.inline_kb1,
+                           )
+
+
+@dp.callback_query_handler(text='count', state=Stage.Q1)
+async def count(call: CallbackQuery, state: FSMContext):
+    print(call.message.text)
+
+    async with state.proxy() as data:
+        print(data['current_art'])
+        current_art = data['current_art']
+        print(data[f'title:{current_art}'])
+
+    await call.message.answer('Введите количество:')
+    await Stage.Q2.set()
+
+
+@dp.message_handler(state=Stage.Q2)
+async def count_edit(message: types.Message, state: FSMContext):
+    count = message.text
+
+    async with state.proxy() as data:
+        current_art = data['current_art']
+        art_list = data['art_list']
+        answer = data[f'title:{current_art}']
+
+    answer = answer.replace('Количество: 1', f'Количество: {count}')
+
+    async with state.proxy() as data:
+        data[f'count:{current_art}'] = count
+        data[f'title:{current_art}'] = answer
+
+    await bot.send_message(message.from_user.id,
+                           text=emojize(answer),
+                           )
+
+
+@dp.callback_query_handler(text='price', state=Stage.Q1)
+async def price1(call: CallbackQuery, state: FSMContext):
+    await call.message.answer('Укажите цену:')
+    await Stage.Q3.set()
+
+
+@dp.callback_query_handler(text='price', state=Stage.Q2)
+async def price2(call: CallbackQuery, state: FSMContext):
+    await call.message.answer('Укажите цену:')
+    await Stage.Q3.set()
+
+
+@dp.message_handler(state=Stage.Q3)
+async def price_edit(message: types.Message, state: FSMContext):
+    price = message.text
+
+    async with state.proxy() as data:
+        current_art = data['current_art']
+        art_list = data['art_list']
+        answer = data[f'title:{current_art}']
+
+    answer = answer.replace('Цена продажи: 0р', f'Цена продажи: {price}р')
+
+    async with state.proxy() as data:
+        data[f'price:{current_art}'] = price
+        data[f'title:{current_art}'] = answer
+
+    await bot.send_message(message.from_user.id,
+                           text=emojize(answer),
+                           )
+
+
+@dp.callback_query_handler(text='continue', state=Stage.Q3)
+async def next_prod(call: CallbackQuery, state: FSMContext):
+    await call.answer('Ищу следующий товар...')
+
+    async with state.proxy() as data:
+        current_art = data['current_art']
+        art_list = data['art_list']
+        index = art_list.index(current_art)
+        # TODO: тут будет try-except
+        current_art = data['current_art'] = art_list[index + 1]
+
+        message = data['message']
+
+    await Stage.Q1.set()
+
+    answer, images = parse(current_art)
+
+    async with state.proxy() as data:
+        data[f'article:{current_art}'] = current_art
+        data[f'images:{current_art}'] = images
+        data[f'count:{current_art}'] = 1
+        data[f'price:{current_art}'] = 0
+
+    count = 1
+    price = 0
+    answer += bold(f'\nКоличество: {count}\nЦена продажи: {price}р')
+
+    async with state.proxy() as data:
+        data[f'title:{current_art}'] = answer
+
+    media = []
+
+    for img in images:
+        media.append(InputMediaPhoto(img))
+
+    await bot.send_chat_action(message.from_user.id,
+                               ChatActions.TYPING)
+
+    await bot.send_media_group(message.from_user.id,
+                               media,
+                               reply_to_message_id=message.message_id,
+                               )
+
+    await bot.send_message(message.from_user.id,
+                           text=emojize(answer),
+                           reply_markup=kb.inline_kb1,
+                           )
+
+
+@dp.message_handler(content_types=ContentType.ANY)
+async def default(message: types.Message):
+    # if message.text.isdigit():
+    #     if len(message.text) % 6 == 0:
+    #         answer, images = parse(message.text)
+    #
+    #         count = 1
+    #         price = 0
+    #         answer += bold(f'\nКоличество: {count}\nЦена продажи: {price}р')
+    #
+    #         media = []
+    #
+    #         for img in images:
+    #             media.append(InputMediaPhoto(img))
+    #
+    #         await bot.send_chat_action(message.from_user.id,
+    #                                    ChatActions.TYPING)
+    #
+    #         await bot.send_media_group(message.from_user.id,
+    #                                    media,
+    #                                    reply_to_message_id=message.message_id,
+    #                                    )
+    #
+    #         await bot.send_message(message.from_user.id,
+    #                                text=emojize(answer),
+    #                                reply_to_message_id=-1,
+    #                                reply_markup=kb.inline_kb1,
+    #                                )
+    # else:
+    message_text = text(
+        emojize('Я не знаю, что с этим делать :astonished:'),
+        italic('\nЯ просто напомню,'), 'что есть', '/help')
+    await message.reply(message_text)
 
 
 if __name__ == '__main__':

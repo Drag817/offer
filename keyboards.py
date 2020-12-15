@@ -2,7 +2,7 @@ from aiogram.types import ReplyKeyboardRemove, \
     ReplyKeyboardMarkup, KeyboardButton, \
     InlineKeyboardMarkup, InlineKeyboardButton
 
-new_order_btn = KeyboardButton('Новый заказ')
+new_order_btn = KeyboardButton('/new_order')
 
 # greet_kb = ReplyKeyboardMarkup()
 # greet_kb.add(button_hi)
@@ -20,8 +20,12 @@ inline_kb1 = InlineKeyboardMarkup(
         [
             InlineKeyboardButton(text='Изменить кол-во',
                                  callback_data='count'),
-            InlineKeyboardButton(text='Изменить цену',
+            InlineKeyboardButton(text='Указть цену',
                                  callback_data='price'),
+        ],
+        [
+            InlineKeyboardButton(text='Продолжить ✅',
+                                 callback_data='continue'),
         ],
     ]
 )
