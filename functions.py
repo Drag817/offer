@@ -77,7 +77,9 @@ def send_email(recipient):
     msg['From'] = email
     msg['To'] = recipient
     msg['Subject'] = f'Коммерческое предложение от {date}'
-    body = 'Актуальное коммерческое предложение во вложении'
+    body = 'Актуальное коммерческое предложение во вложении.\n' \
+           'При открытии вложения с мобильного устройства, ' \
+           'рекомендуется сначала скачать его.'
     msg.attach(MIMEText(body, 'plain'))
     msg.attach(part)
 
