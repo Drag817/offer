@@ -1,4 +1,7 @@
 import logging
+import urllib
+from datetime import datetime
+import io
 
 from aiogram import Bot, Dispatcher, executor, types
 from aiogram.dispatcher import FSMContext
@@ -7,12 +10,15 @@ from aiogram.utils.emoji import emojize
 from aiogram.types.message import ContentType
 from aiogram.utils.markdown import italic, text, bold
 from aiogram.types import InputMediaPhoto, ChatActions, CallbackQuery
+from aiogram.types import InputFile
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.dispatcher.filters.state import StatesGroup, State
+from docx2pdf import convert
 
 from config import TOKEN
-from functions import parse
+from functions import parse, send_email
+from docx_creater import offer_crate
 import keyboards as kb
 
 
@@ -21,6 +27,8 @@ class Stage(StatesGroup):
     Q1 = State()
     Q2 = State()
     Q3 = State()
+    Q4 = State()
+    Q5 = State()
 
 
 logging.basicConfig(level=logging.INFO)
@@ -53,71 +61,19 @@ async def process_start_command(message: types.Message):
                         reply_markup=kb.greet_kb1)
 
 
-# @dp.message_handler(commands=["geophone"])
-# async def geophone(message):
-#     # Эти параметры для клавиатуры необязательны, просто для удобства
-#     keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
-#     button_phone = types.KeyboardButton(text="Отправить номер телефона",
-#                                         request_contact=True)
-#     button_geo = types.KeyboardButton(text="Отправить местоположение",
-#                                       request_location=True)
-#     keyboard.add(button_phone, button_geo)
-#     await bot.send_message(message.chat.id,
-#                            "Отправь мне свой номер телефона или поделись "
-#                            "местоположением, жалкий человечишка!",
-#                            reply_markup=keyboard)
-
-
-# @dp.message_handler(commands=['1'])
-# async def process_command_1(message: types.Message):
-#     await message.reply("Первая инлайн кнопка", reply_markup=kb.inline_kb1)
-
-
-# @dp.callback_query_handler(lambda c: c.data == 'count')
-# async def process_callback_button1(callback_query: types.CallbackQuery):
-#     await bot.answer_callback_query(callback_query.id)
-#     await bot.send_message(callback_query.from_user.id,
-#                            'Нажата первая кнопка!')
-
-
-# @dp.callback_query_handler(lambda c: c.data and c.data.startswith('btn'))
-# async def process_callback_kb1btn1(callback_query: types.CallbackQuery):
-#     code = callback_query.data[-1]
-#     if code.isdigit():
-#         code = int(code)
-#     if code == 2:
-#         await bot.answer_callback_query(callback_query.id,
-#                                         text='Нажата вторая кнопка')
-#     elif code == 5:
-#         await bot.answer_callback_query(
-#             callback_query.id,
-#             text='Нажата кнопка с номером 5.\n'
-#                  'А этот текст может быть длиной до 200 символов 😉',
-#             show_alert=True)
-#     else:
-#         await bot.answer_callback_query(callback_query.id)
-#     await bot.send_message(callback_query.from_user.id,
-#                            f'Нажата инлайн кнопка! code={code}')
-
-
-# @dp.message_handler(commands=['2'])
-# async def process_command_2(message: types.Message):
-#     await message.reply("Отправляю все возможные кнопки",
-#                         reply_markup=kb.inline_kb_full)
-
-
 @dp.message_handler(Command('new_order'))
 async def echo(message: types.Message):
     await message.answer('Введите артикулы товаров через пробел')
-
     await Stage.Q1.set()
 
 
 @dp.message_handler(state=Stage.Q1)
 async def process(message: types.Message, state: FSMContext):
+    await bot.send_chat_action(message.from_user.id,
+                               ChatActions.TYPING)
+
     art_list = message.text.split()
     for art in art_list:
-        print(art)
         if art.isdigit() and len(art) % 6 == 0:
             continue
         else:
@@ -125,13 +81,15 @@ async def process(message: types.Message, state: FSMContext):
             return await message.answer('Неверно введены артикулы!')
 
     async with state.proxy() as data:
-        data['art_list'] = art_list
+        try:
+            for art in art_list:
+                data['art_list'].append(art)
+            print(data['art_list'])
+        except KeyError:
+            data['art_list'] = art_list
         data['current_art'] = art_list[0]
         data['message'] = message
         current_art = art_list[0]
-
-        # async with state.proxy() as data:
-        #     art_list = data['art_list']
 
     answer, images = parse(current_art)
 
@@ -153,9 +111,6 @@ async def process(message: types.Message, state: FSMContext):
     for img in images:
         media.append(InputMediaPhoto(img))
 
-    await bot.send_chat_action(message.from_user.id,
-                               ChatActions.TYPING)
-
     await bot.send_media_group(message.from_user.id,
                                media,
                                reply_to_message_id=message.message_id,
@@ -168,14 +123,7 @@ async def process(message: types.Message, state: FSMContext):
 
 
 @dp.callback_query_handler(text='count', state=Stage.Q1)
-async def count(call: CallbackQuery, state: FSMContext):
-    print(call.message.text)
-
-    async with state.proxy() as data:
-        print(data['current_art'])
-        current_art = data['current_art']
-        print(data[f'title:{current_art}'])
-
+async def count(call: CallbackQuery):
     await call.message.answer('Введите количество:')
     await Stage.Q2.set()
 
@@ -186,7 +134,6 @@ async def count_edit(message: types.Message, state: FSMContext):
 
     async with state.proxy() as data:
         current_art = data['current_art']
-        art_list = data['art_list']
         answer = data[f'title:{current_art}']
 
     answer = answer.replace('Количество: 1', f'Количество: {count}')
@@ -201,13 +148,13 @@ async def count_edit(message: types.Message, state: FSMContext):
 
 
 @dp.callback_query_handler(text='price', state=Stage.Q1)
-async def price1(call: CallbackQuery, state: FSMContext):
+async def price1(call: CallbackQuery):
     await call.message.answer('Укажите цену:')
     await Stage.Q3.set()
 
 
 @dp.callback_query_handler(text='price', state=Stage.Q2)
-async def price2(call: CallbackQuery, state: FSMContext):
+async def price2(call: CallbackQuery):
     await call.message.answer('Укажите цену:')
     await Stage.Q3.set()
 
@@ -218,7 +165,6 @@ async def price_edit(message: types.Message, state: FSMContext):
 
     async with state.proxy() as data:
         current_art = data['current_art']
-        art_list = data['art_list']
         answer = data[f'title:{current_art}']
 
     answer = answer.replace('Цена продажи: 0р', f'Цена продажи: {price}р')
@@ -239,11 +185,18 @@ async def next_prod(call: CallbackQuery, state: FSMContext):
     async with state.proxy() as data:
         current_art = data['current_art']
         art_list = data['art_list']
-        index = art_list.index(current_art)
-        # TODO: тут будет try-except
-        current_art = data['current_art'] = art_list[index + 1]
-
         message = data['message']
+        index = art_list.index(current_art)
+        try:
+            current_art = data['current_art'] = art_list[index + 1]
+        except IndexError:
+            return await bot.send_message(message.from_user.id,
+                                          text='Артикулы обработаны. '
+                                               'Вы можете:',
+                                          reply_markup=kb.inline_finalize,)
+
+    await bot.send_chat_action(message.from_user.id,
+                               ChatActions.TYPING)
 
     await Stage.Q1.set()
 
@@ -267,9 +220,6 @@ async def next_prod(call: CallbackQuery, state: FSMContext):
     for img in images:
         media.append(InputMediaPhoto(img))
 
-    await bot.send_chat_action(message.from_user.id,
-                               ChatActions.TYPING)
-
     await bot.send_media_group(message.from_user.id,
                                media,
                                reply_to_message_id=message.message_id,
@@ -281,35 +231,96 @@ async def next_prod(call: CallbackQuery, state: FSMContext):
                            )
 
 
+@dp.callback_query_handler(text='add', state=Stage.Q3)
+async def again(call: CallbackQuery):
+    await call.message.answer('Введите артикулы товаров через пробел')
+    await Stage.Q1.set()
+
+
+@dp.callback_query_handler(text='create', state=Stage.Q3)
+async def offer_docx(call: CallbackQuery, state: FSMContext):
+    async with state.proxy() as data:
+        message = data['message']
+
+    await bot.send_chat_action(message.from_user.id,
+                               ChatActions.UPLOAD_DOCUMENT)
+
+    order = {}
+    async with state.proxy() as data:
+        order.update(data)
+        message = data['message']
+
+    date = datetime.today().strftime("%d.%m.%y")
+    offer_crate(order)
+
+    msg = 'Прверьте, пожалуйста, документ. Если всё в порядке - ' \
+          'Нажмите "В PDF". По необходимости, Вы можете отредактировать' \
+          'документ и прислать его сюда!'
+
+    await Stage.Q4.set()
+    await bot.send_document(message.from_user.id,
+                            InputFile(f'КП_от_{date}.docx'))
+
+    await bot.send_message(message.from_user.id,
+                           text=msg,
+                           reply_markup=kb.pdf,
+                           )
+
+
+@dp.callback_query_handler(text='convert', state=Stage.Q4)
+async def docx_to_pdf_inline(call: CallbackQuery, state: FSMContext):
+    async with state.proxy() as data:
+        message = data['message']
+
+    await bot.send_chat_action(message.from_user.id,
+                               ChatActions.RECORD_AUDIO)
+
+    date = datetime.today().strftime("%d.%m.%y")
+    convert(f'КП_от_{date}.docx')
+
+    await call.message.answer('Введите почту получателя')
+    await Stage.Q5.set()
+
+
+@dp.message_handler(content_types=ContentType.DOCUMENT, state=Stage.Q4)
+async def docx_to_pdf_file(msg: types.Message, state: FSMContext):
+    async with state.proxy() as data:
+        message = data['message']
+
+    await bot.send_chat_action(message.from_user.id,
+                               ChatActions.RECORD_AUDIO)
+
+    date = datetime.today().strftime("%d.%m.%y")
+
+    document_id = msg.document.file_id
+    file_info = await bot.get_file(document_id)
+    fi = file_info.file_path
+    name = f'КП_от_{date}.docx'
+    urllib.request.urlretrieve(
+        f'https://api.telegram.org/file/bot{TOKEN}/{fi}', f'./{name}')
+
+    convert(name)
+
+    await bot.send_message(message.from_user.id,
+                           text='Введите почту получателя',
+                           )
+    await Stage.Q5.set()
+
+
+@dp.message_handler(state=Stage.Q5)
+async def price_edit(message: types.Message, state: FSMContext):
+    recipient = message.text
+    send_email(recipient)
+
+    await state.finish()
+
+    await bot.send_message(message.from_user.id,
+                           text='Благодарю за работу!',
+                           )
+
+
 @dp.message_handler(content_types=ContentType.ANY)
 async def default(message: types.Message):
-    # if message.text.isdigit():
-    #     if len(message.text) % 6 == 0:
-    #         answer, images = parse(message.text)
-    #
-    #         count = 1
-    #         price = 0
-    #         answer += bold(f'\nКоличество: {count}\nЦена продажи: {price}р')
-    #
-    #         media = []
-    #
-    #         for img in images:
-    #             media.append(InputMediaPhoto(img))
-    #
-    #         await bot.send_chat_action(message.from_user.id,
-    #                                    ChatActions.TYPING)
-    #
-    #         await bot.send_media_group(message.from_user.id,
-    #                                    media,
-    #                                    reply_to_message_id=message.message_id,
-    #                                    )
-    #
-    #         await bot.send_message(message.from_user.id,
-    #                                text=emojize(answer),
-    #                                reply_to_message_id=-1,
-    #                                reply_markup=kb.inline_kb1,
-    #                                )
-    # else:
     message_text = text(
         emojize('Я не знаю, что с этим делать :astonished:'),
         italic('\nЯ просто напомню,'), 'что есть', '/help')
